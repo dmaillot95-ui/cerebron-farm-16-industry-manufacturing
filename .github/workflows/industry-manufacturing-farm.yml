@@ -1,0 +1,90 @@
+name: CEREBRON Farm 16 Industry Manufacturing
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          roles=[
+          ('MANUFACTURING_SYSTEM_ARCHITECT','factory architecture, takt, flow, constraints'),
+          ('PROCESS_ENGINEERING_SPECIALIST','process windows, capability, yield'),
+          ('MACHINING_FORMING_SPECIALIST','machining, forming, joining, finishing'),
+          ('ADDITIVE_MANUFACTURING_SPECIALIST','additive manufacturing qualification and limits'),
+          ('AUTOMATION_ROBOTICS_SPECIALIST','industrial automation, robotics, controls'),
+          ('INDUSTRIAL_DATA_MES_SPECIALIST','MES, traceability, industrial data'),
+          ('QUALITY_ENGINEERING_SPECIALIST','SPC, capability, defects, control plans'),
+          ('METROLOGY_SPECIALIST','measurement systems, calibration, uncertainty'),
+          ('RELIABILITY_MAINTENANCE_SPECIALIST','maintenance, RCM, failure prevention'),
+          ('SUPPLY_CHAIN_SPECIALIST','sourcing, logistics, inventory, supplier risk'),
+          ('CAPACITY_BOTTLENECK_SPECIALIST','capacity, bottleneck and throughput analysis'),
+          ('LEAN_FLOW_SPECIALIST','lean flow, waste, line balance, changeover'),
+          ('INDUSTRIAL_SAFETY_SPECIALIST','industrial hazards, machine and process safety'),
+          ('COST_CAPEX_OPEX_SPECIALIST','cost models, CAPEX, OPEX, unit economics'),
+          ('INDUSTRIALIZATION_NPI_SPECIALIST','NPI, ramp-up, transfer to production'),
+          ('RESILIENCE_CONTINUITY_SPECIALIST','resilience, redundancy, business continuity'),
+          ('FMEA_ROOT_CAUSE_SPECIALIST','FMEA, fault trees, root cause analysis'),
+          ('VALIDATION_REPLICATION_SPECIALIST','verification, validation and replication'),
+          ('RED_TEAM_INDUSTRIAL_AUDITOR','attack assumptions, hidden bottlenecks, weak evidence'),
+          ('OMEGA_INDUSTRY_SYNTHESIZER','integrate evidence, contradictions, decisions and residual gaps')]
+          models=['huggingface-projects/llama-3.2-3B-Instruct','huggingface-projects/gemma-2-9b-it']
+          inc=[]
+          for i,(r,f) in enumerate(roles): inc.append({'role':r,'focus':f,'model':models[i%2]})
+          v=json.dumps({'include':inc},separators=(',',':'))
+          with open(os.environ['GITHUB_OUTPUT'],'a') as g:g.write('matrix='+v+'\n')
+          PY
+  industry-agent:
+    needs: plan
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - run: pip install hf-gradio
+      - run: python scripts/industry_agent.py
+        env:
+          ROLE: ${{ matrix.role }}
+          MODEL: ${{ matrix.model }}
+          FOCUS: ${{ matrix.focus }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: farm16-${{ matrix.role }}
+          path: out/${{ matrix.role }}.json
+  omega-fusion:
+    if: always()
+    needs: industry-agent
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: farm16-*
+          path: packets
+          merge-multiple: true
+      - run: |
+          python - <<'PY'
+          import json,glob,pathlib
+          rows=[]
+          for p in glob.glob('packets/*.json'):
+            try: rows.append(json.load(open(p)))
+            except: pass
+          out={'farm':'16-industry-manufacturing','roles_returned':len(rows),'successful_external_ai_calls':sum(bool(x.get('inference_success')) for x in rows),'model_families':sorted(set(x.get('model','') for x in rows)),'epistemic_status':'UNREVIEWED_EXTERNAL_AGENT_OUTPUT','results':rows}
+          pathlib.Path('omega').mkdir(exist_ok=True)
+          pathlib.Path('omega/farm16-omega.json').write_text(json.dumps(out,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: farm16-omega-packet
+          path: omega/farm16-omega.json
